@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
+  LineChart,
   Bar,
   Line,
   XAxis,
@@ -21,10 +22,24 @@ type Stats = {
   totals: { revenue: number; count: number; corps: number; avg: number };
   timeseries: { date: string; revenue: number; count: number }[];
   breakdown: { key: string; revenue: number; count: number }[];
+  products: string[];
+  dateRange: { min: string | null; max: string | null };
 };
 
 const yen = (n: number) => "¥" + Math.round(n).toLocaleString("ja-JP");
 const num = (n: number) => n.toLocaleString("ja-JP");
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+// 白テーマ用カラー
+const C = {
+  grid: "#e2e5ea",
+  axis: "#6b7280",
+  revenue: "#2563eb",
+  count: "#059669",
+  tooltipBg: "#ffffff",
+  tooltipBorder: "#e2e5ea",
+  tooltipText: "#1c2330",
+};
 
 const DATE_LABEL: Record<DateKey, string> = {
   created: "受注日（作成日時）",
@@ -35,6 +50,9 @@ const DIM_LABEL: Record<DimKey, string> = {
   equip: "レンタル機材",
   corp: "貸出先法人",
 };
+
+// 年度（4月始まり）。月は1-12。
+const fiscalYearOf = (y: number, m: number) => (m >= 4 ? y : y - 1);
 
 function Segmented<T extends string>({
   value,
@@ -61,27 +79,119 @@ function Segmented<T extends string>({
 }
 
 export default function Dashboard() {
+  // 初期: 今月（日別）
+  const now = new Date();
+  const curY = now.getFullYear();
+  const curM = now.getMonth() + 1;
+
   const [dateField, setDateField] = useState<DateKey>("created");
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [dimension, setDimension] = useState<DimKey>("arrange");
+  const [product, setProduct] = useState<string>("all");
+
+  // 日別: dayYear/dayMonth、月別: fiscalYear（独立保持）
+  const [dayYear, setDayYear] = useState<number>(curY);
+  const [dayMonth, setDayMonth] = useState<number>(curM);
+  const [fiscalYear, setFiscalYear] = useState<number>(fiscalYearOf(curY, curM));
 
   const [data, setData] = useState<Stats | null>(null);
+  const [productList, setProductList] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const reqYear = granularity === "day" ? dayYear : fiscalYear;
 
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const qs = new URLSearchParams({ dateField, granularity, dimension });
+    const qs = new URLSearchParams({
+      dateField,
+      granularity,
+      dimension,
+      product,
+      year: String(reqYear),
+      month: String(dayMonth),
+    });
     fetch(`/api/stats?${qs}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.error) throw new Error(d.error);
         setData(d);
+        if (product === "all" && d.products) setProductList(d.products);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [dateField, granularity, dimension]);
+  }, [dateField, granularity, dimension, product, reqYear, dayMonth]);
+
+  // 年/年度セレクタの選択肢（データ範囲から）
+  const { calYears, fiscalYears } = useMemo(() => {
+    const min = data?.dateRange?.min;
+    const max = data?.dateRange?.max;
+    const minY = min ? parseInt(min.slice(0, 4), 10) : curY;
+    const maxY = max ? parseInt(max.slice(0, 4), 10) : curY;
+    const cal: number[] = [];
+    for (let y = minY; y <= maxY; y++) cal.push(y);
+    if (!cal.includes(dayYear)) cal.push(dayYear);
+    cal.sort((a, b) => a - b);
+
+    const fyMin = min ? fiscalYearOf(parseInt(min.slice(0, 4), 10), parseInt(min.slice(5, 7), 10)) : curY;
+    const fyMax = max ? fiscalYearOf(parseInt(max.slice(0, 4), 10), parseInt(max.slice(5, 7), 10)) : curY;
+    const fy: number[] = [];
+    for (let y = fyMin; y <= fyMax; y++) fy.push(y);
+    if (!fy.includes(fiscalYear)) fy.push(fiscalYear);
+    fy.sort((a, b) => a - b);
+    return { calYears: cal, fiscalYears: fy };
+  }, [data?.dateRange, dayYear, fiscalYear, curY]);
+
+  // グラフ用に軸をゼロ埋め（日別=1〜月末 / 月別=4〜翌3月）
+  const chartData = useMemo(() => {
+    const map = new Map<string, { revenue: number; count: number }>();
+    (data?.timeseries ?? []).forEach((p) =>
+      map.set(p.date, { revenue: p.revenue, count: p.count })
+    );
+    if (granularity === "day") {
+      const days = new Date(dayYear, dayMonth, 0).getDate(); // 月末日
+      return Array.from({ length: days }, (_, i) => {
+        const d = i + 1;
+        const key = `${dayYear}-${pad2(dayMonth)}-${pad2(d)}`;
+        const v = map.get(key) ?? { revenue: 0, count: 0 };
+        return { label: `${dayMonth}/${d}`, ...v };
+      });
+    }
+    // 月別: 4月〜翌3月
+    return Array.from({ length: 12 }, (_, i) => {
+      const cm = 4 + i;
+      const yr = cm <= 12 ? fiscalYear : fiscalYear + 1;
+      const mm = cm <= 12 ? cm : cm - 12;
+      const key = `${yr}-${pad2(mm)}`;
+      const v = map.get(key) ?? { revenue: 0, count: 0 };
+      return { label: `${mm}月`, ...v };
+    });
+  }, [data?.timeseries, granularity, dayYear, dayMonth, fiscalYear]);
+
+  // 期間の前後移動
+  const movePeriod = (dir: -1 | 1) => {
+    if (granularity === "day") {
+      let m = dayMonth + dir;
+      let y = dayYear;
+      if (m < 1) {
+        m = 12;
+        y -= 1;
+      } else if (m > 12) {
+        m = 1;
+        y += 1;
+      }
+      setDayMonth(m);
+      setDayYear(y);
+    } else {
+      setFiscalYear(fiscalYear + dir);
+    }
+  };
+
+  const periodTitle =
+    granularity === "day"
+      ? `${dayYear}年${dayMonth}月（日別）`
+      : `${fiscalYear}年度（${fiscalYear}/4〜${fiscalYear + 1}/3）`;
 
   return (
     <div className="container">
@@ -113,10 +223,65 @@ export default function Dashboard() {
             onChange={setGranularity}
             options={[
               { value: "day", label: "日別" },
-              { value: "month", label: "月別" },
+              { value: "month", label: "月別（年度）" },
             ]}
           />
         </div>
+
+        <div className="control-group">
+          <label>{granularity === "day" ? "年" : "年度"}</label>
+          <div className="period-nav">
+            <button onClick={() => movePeriod(-1)} aria-label="前へ">
+              ◀
+            </button>
+            {granularity === "day" ? (
+              <select
+                className="period-select"
+                value={dayYear}
+                onChange={(e) => setDayYear(Number(e.target.value))}
+              >
+                {calYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}年
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <select
+                className="period-select"
+                value={fiscalYear}
+                onChange={(e) => setFiscalYear(Number(e.target.value))}
+              >
+                {fiscalYears.map((y) => (
+                  <option key={y} value={y}>
+                    {y}年度
+                  </option>
+                ))}
+              </select>
+            )}
+            <button onClick={() => movePeriod(1)} aria-label="次へ">
+              ▶
+            </button>
+          </div>
+        </div>
+
+        {granularity === "day" && (
+          <div className="control-group">
+            <label>月</label>
+            <select
+              className="period-select"
+              value={dayMonth}
+              onChange={(e) => setDayMonth(Number(e.target.value))}
+            >
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <option key={m} value={m}>
+                  {m}月
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="control-group">
           <label>分類軸</label>
           <Segmented<DimKey>
@@ -129,16 +294,32 @@ export default function Dashboard() {
             ]}
           />
         </div>
+        <div className="control-group">
+          <label>商品（機材）で絞り込み</label>
+          <select
+            className="product-select"
+            value={product}
+            onChange={(e) => setProduct(e.target.value)}
+          >
+            <option value="all">全商品</option>
+            {productList.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {loading && <div className="loading">読み込み中…</div>}
       {error && <div className="error">エラー: {error}</div>}
 
-      {data && !loading && (
+      {data && (
         <>
           <div className="kpis">
             <div className="kpi">
-              <div className="kpi-label">売上合計（税抜）</div>
+              <div className="kpi-label">
+                売上合計（税抜）{product !== "all" ? " / " + product : ""}
+              </div>
               <div className="kpi-value">{yen(data.totals.revenue)}</div>
             </div>
             <div className="kpi">
@@ -163,31 +344,33 @@ export default function Dashboard() {
 
           <div className="panel">
             <h2>
-              {DATE_LABEL[dateField]}・{granularity === "day" ? "日別" : "月別"}
-              の売上と販売数
+              {DATE_LABEL[dateField]}・{periodTitle}の売上と販売数（折れ線）
+              {product !== "all" ? `　【${product}】` : ""}
+              {loading ? "　…更新中" : ""}
             </h2>
-            <ResponsiveContainer width="100%" height={360}>
-              <ComposedChart data={data.timeseries}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
-                <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} />
+            <ResponsiveContainer width="100%" height={380}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+                <XAxis dataKey="label" stroke={C.axis} fontSize={11} />
                 <YAxis
                   yAxisId="left"
-                  stroke="#4f8cff"
+                  stroke={C.revenue}
                   fontSize={11}
                   tickFormatter={(v) => "¥" + (v / 10000).toFixed(0) + "万"}
                 />
                 <YAxis
                   yAxisId="right"
                   orientation="right"
-                  stroke="#34d399"
+                  stroke={C.count}
                   fontSize={11}
+                  allowDecimals={false}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: "#1f2331",
-                    border: "1px solid #2a2f3e",
+                    background: C.tooltipBg,
+                    border: `1px solid ${C.tooltipBorder}`,
                     borderRadius: 8,
-                    color: "#e6e9ef",
+                    color: C.tooltipText,
                   }}
                   formatter={(value: any, name: any) =>
                     name === "売上"
@@ -196,12 +379,14 @@ export default function Dashboard() {
                   }
                 />
                 <Legend />
-                <Bar
+                <Line
                   yAxisId="left"
+                  type="monotone"
                   dataKey="revenue"
                   name="売上"
-                  fill="#4f8cff"
-                  radius={[3, 3, 0, 0]}
+                  stroke={C.revenue}
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
                   isAnimationActive={false}
                 />
                 <Line
@@ -209,79 +394,89 @@ export default function Dashboard() {
                   type="monotone"
                   dataKey="count"
                   name="販売数"
-                  stroke="#34d399"
+                  stroke={C.count}
                   strokeWidth={2}
-                  dot={false}
+                  dot={{ r: 2 }}
                   isAnimationActive={false}
                 />
-              </ComposedChart>
+              </LineChart>
             </ResponsiveContainer>
           </div>
 
           <div className="grid-2">
             <div className="panel">
-              <h2>{DIM_LABEL[dimension]}別 売上</h2>
+              <h2>{DIM_LABEL[dimension]}別 売上（{periodTitle}）</h2>
               <ResponsiveContainer width="100%" height={320}>
                 <ComposedChart
                   layout="vertical"
                   data={data.breakdown.slice(0, 12)}
                   margin={{ left: 20 }}
                 >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3e" />
+                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
                   <XAxis
                     type="number"
-                    stroke="#9aa3b2"
+                    stroke={C.axis}
                     fontSize={11}
                     tickFormatter={(v) => (v / 10000).toFixed(0) + "万"}
                   />
                   <YAxis
                     type="category"
                     dataKey="key"
-                    stroke="#9aa3b2"
+                    stroke={C.axis}
                     fontSize={11}
                     width={140}
                   />
                   <Tooltip
                     contentStyle={{
-                      background: "#1f2331",
-                      border: "1px solid #2a2f3e",
+                      background: C.tooltipBg,
+                      border: `1px solid ${C.tooltipBorder}`,
                       borderRadius: 8,
-                      color: "#e6e9ef",
+                      color: C.tooltipText,
                     }}
                     formatter={(value: any) => [yen(Number(value)), "売上"]}
                   />
-                  <Bar dataKey="revenue" name="売上" fill="#4f8cff" radius={[0, 3, 3, 0]} isAnimationActive={false} />
+                  <Bar
+                    dataKey="revenue"
+                    name="売上"
+                    fill={C.revenue}
+                    radius={[0, 3, 3, 0]}
+                    isAnimationActive={false}
+                  />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
 
             <div className="panel">
-              <h2>{DIM_LABEL[dimension]}別 明細</h2>
-              <table>
-                <thead>
-                  <tr>
-                    <th>{DIM_LABEL[dimension]}</th>
-                    <th className="num">件数</th>
-                    <th className="num">売上（税抜）</th>
-                    <th className="num">構成比</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.breakdown.map((b) => (
-                    <tr key={b.key}>
-                      <td>{b.key}</td>
-                      <td className="num">{num(b.count)}</td>
-                      <td className="num">{yen(b.revenue)}</td>
-                      <td className="num">
-                        {data.totals.revenue > 0
-                          ? ((b.revenue / data.totals.revenue) * 100).toFixed(1)
-                          : "0.0"}
-                        %
-                      </td>
+              <h2>{DIM_LABEL[dimension]}別 明細（{periodTitle}）</h2>
+              {data.breakdown.length === 0 ? (
+                <div className="loading">この期間のデータはありません</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{DIM_LABEL[dimension]}</th>
+                      <th className="num">件数</th>
+                      <th className="num">売上（税抜）</th>
+                      <th className="num">構成比</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {data.breakdown.map((b) => (
+                      <tr key={b.key}>
+                        <td>{b.key}</td>
+                        <td className="num">{num(b.count)}</td>
+                        <td className="num">{yen(b.revenue)}</td>
+                        <td className="num">
+                          {data.totals.revenue > 0
+                            ? ((b.revenue / data.totals.revenue) * 100).toFixed(1)
+                            : "0.0"}
+                          %
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </>
