@@ -8,6 +8,7 @@
   --accent: #2563eb;
   --accent-2: #059669;
   --warn: #b45309;
+  --control-h: 38px;
 }
 
 * {
@@ -69,6 +70,7 @@ h1 {
 
 .segmented {
   display: inline-flex;
+  height: var(--control-h);
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -76,10 +78,12 @@ h1 {
 }
 
 .segmented button {
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--muted);
-  padding: 8px 14px;
+  padding: 0 14px;
   font-size: 13px;
   cursor: pointer;
   transition: all 0.15s;
@@ -97,13 +101,14 @@ h1 {
 
 select.product-select {
   appearance: none;
+  height: var(--control-h);
   background: var(--panel-2)
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")
     no-repeat right 10px center;
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  padding: 8px 30px 8px 12px;
+  padding: 0 30px 0 12px;
   font-size: 13px;
   cursor: pointer;
   min-width: 200px;
@@ -111,6 +116,7 @@ select.product-select {
 
 .period-nav {
   display: inline-flex;
+  height: var(--control-h);
   align-items: stretch;
   gap: 6px;
 }
@@ -121,6 +127,7 @@ select.product-select {
   color: var(--text);
   border-radius: 8px;
   width: 32px;
+  height: 100%;
   cursor: pointer;
   font-size: 12px;
 }
@@ -129,15 +136,30 @@ select.product-select {
   background: var(--border);
 }
 
+.month-display {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 select.period-select {
   appearance: none;
+  height: var(--control-h);
   background: var(--panel-2)
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")
     no-repeat right 8px center;
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
-  padding: 8px 28px 8px 12px;
+  padding: 0 28px 0 12px;
   font-size: 13px;
   cursor: pointer;
 }

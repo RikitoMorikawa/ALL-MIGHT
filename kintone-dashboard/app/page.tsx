@@ -86,7 +86,7 @@ export default function Dashboard() {
 
   const [dateField, setDateField] = useState<DateKey>("created");
   const [granularity, setGranularity] = useState<Granularity>("day");
-  const [dimension, setDimension] = useState<DimKey>("arrange");
+  const [dimension, setDimension] = useState<DimKey>("equip");
   const [product, setProduct] = useState<string>("all");
 
   // 日別: dayYear/dayMonth、月別: fiscalYear（独立保持）
@@ -169,23 +169,19 @@ export default function Dashboard() {
     });
   }, [data?.timeseries, granularity, dayYear, dayMonth, fiscalYear]);
 
-  // 期間の前後移動
-  const movePeriod = (dir: -1 | 1) => {
-    if (granularity === "day") {
-      let m = dayMonth + dir;
-      let y = dayYear;
-      if (m < 1) {
-        m = 12;
-        y -= 1;
-      } else if (m > 12) {
-        m = 1;
-        y += 1;
-      }
-      setDayMonth(m);
-      setDayYear(y);
-    } else {
-      setFiscalYear(fiscalYear + dir);
+  // 月の前後移動（年をまたぐ場合は年も調整）
+  const moveMonth = (dir: -1 | 1) => {
+    let m = dayMonth + dir;
+    let y = dayYear;
+    if (m < 1) {
+      m = 12;
+      y -= 1;
+    } else if (m > 12) {
+      m = 1;
+      y += 1;
     }
+    setDayMonth(m);
+    setDayYear(y);
   };
 
   const periodTitle =
@@ -230,55 +226,45 @@ export default function Dashboard() {
 
         <div className="control-group">
           <label>{granularity === "day" ? "年" : "年度"}</label>
-          <div className="period-nav">
-            <button onClick={() => movePeriod(-1)} aria-label="前へ">
-              ◀
-            </button>
-            {granularity === "day" ? (
-              <select
-                className="period-select"
-                value={dayYear}
-                onChange={(e) => setDayYear(Number(e.target.value))}
-              >
-                {calYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}年
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <select
-                className="period-select"
-                value={fiscalYear}
-                onChange={(e) => setFiscalYear(Number(e.target.value))}
-              >
-                {fiscalYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}年度
-                  </option>
-                ))}
-              </select>
-            )}
-            <button onClick={() => movePeriod(1)} aria-label="次へ">
-              ▶
-            </button>
-          </div>
+          {granularity === "day" ? (
+            <select
+              className="period-select"
+              value={dayYear}
+              onChange={(e) => setDayYear(Number(e.target.value))}
+            >
+              {calYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}年
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              className="period-select"
+              value={fiscalYear}
+              onChange={(e) => setFiscalYear(Number(e.target.value))}
+            >
+              {fiscalYears.map((y) => (
+                <option key={y} value={y}>
+                  {y}年度
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {granularity === "day" && (
           <div className="control-group">
             <label>月</label>
-            <select
-              className="period-select"
-              value={dayMonth}
-              onChange={(e) => setDayMonth(Number(e.target.value))}
-            >
-              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                <option key={m} value={m}>
-                  {m}月
-                </option>
-              ))}
-            </select>
+            <div className="period-nav">
+              <button onClick={() => moveMonth(-1)} aria-label="前月">
+                ◀
+              </button>
+              <span className="month-display">{dayMonth}月</span>
+              <button onClick={() => moveMonth(1)} aria-label="翌月">
+                ▶
+              </button>
+            </div>
           </div>
         )}
 
