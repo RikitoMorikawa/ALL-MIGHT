@@ -196,6 +196,10 @@ export default function Dashboard() {
         売上（税抜：機器代+配送費-調整額）と販売数
       </div>
 
+      <div className="note">
+        ※ 最新データに1日1回自動更新
+      </div>
+
       <div className="controls">
         <div className="control-group">
           <label>日付軸</label>
