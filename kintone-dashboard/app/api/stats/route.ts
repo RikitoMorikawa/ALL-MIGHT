@@ -44,14 +44,12 @@ export async function GET(req: NextRequest) {
 
   const dateKey = (sp.get("dateField") as DateKey) || "created";
   const granularity = (sp.get("granularity") as "day" | "month") || "day";
-  const dimKey = (sp.get("dimension") as DimKey) || "arrange";
   const product = sp.get("product") || "";
   const year = parseInt(sp.get("year") || "", 10);
   const month = parseInt(sp.get("month") || "", 10);
 
   if (
     !(dateKey in DATE_COLUMNS) ||
-    !(dimKey in DIM_COLUMNS) ||
     !["day", "month"].includes(granularity) ||
     !Number.isFinite(year)
   ) {
@@ -62,12 +60,10 @@ export async function GET(req: NextRequest) {
   }
 
   const dateCol = DATE_COLUMNS[dateKey];
-  const dimCol = DIM_COLUMNS[dimKey];
   const dayExpr = dayExprOf(dateKey);
   const monthExpr = monthExprOf(dateKey);
   const groupExpr = granularity === "day" ? dayExpr : monthExpr;
   const notNull = `${dateCol} IS NOT NULL AND ${dateCol} != ''`;
-  const dimLabel = `COALESCE(NULLIF(${dimCol}, ''), '(未設定)')`;
 
   // ---- 期間フィルタ（プレースホルダで安全に） ----
   const clauses: string[] = [];
@@ -110,18 +106,29 @@ export async function GET(req: NextRequest) {
       count: Number(r.cnt ?? 0),
     }));
 
-    // 2) 分類別 内訳（期間内）
-    const bdRes = await db.execute({
-      sql: `SELECT ${dimLabel} AS k, SUM(${REVENUE}) AS rev, COUNT(*) AS cnt
-       FROM records WHERE ${notNull}${extra}
-       GROUP BY k ORDER BY rev DESC`,
-      args: fArgs,
-    });
-    const breakdown = bdRes.rows.map((r) => ({
-      key: String(r.k),
-      revenue: Number(r.rev ?? 0),
-      count: Number(r.cnt ?? 0),
-    }));
+    // 2) 分類別 内訳（全分類軸をまとめて。期間内）
+    const dimEntries = Object.entries(DIM_COLUMNS) as [DimKey, string][];
+    const bdResults = await Promise.all(
+      dimEntries.map(([, col]) =>
+        db.execute({
+          sql: `SELECT COALESCE(NULLIF(${col}, ''), '(未設定)') AS k,
+                       SUM(${REVENUE}) AS rev, COUNT(*) AS cnt
+           FROM records WHERE ${notNull}${extra}
+           GROUP BY k ORDER BY rev DESC`,
+          args: fArgs,
+        })
+      )
+    );
+    const breakdowns = Object.fromEntries(
+      dimEntries.map(([key], i) => [
+        key,
+        bdResults[i].rows.map((r) => ({
+          key: String(r.k),
+          revenue: Number(r.rev ?? 0),
+          count: Number(r.cnt ?? 0),
+        })),
+      ])
+    ) as Record<DimKey, { key: string; revenue: number; count: number }[]>;
 
     // 3) 合計（期間内）
     const totRes = await db.execute({
@@ -158,11 +165,11 @@ export async function GET(req: NextRequest) {
     };
 
     return NextResponse.json({
-      params: { dateKey, granularity, dimKey, product: useProduct ? product : "all" },
+      params: { dateKey, granularity, product: useProduct ? product : "all" },
       period: periodInfo,
       totals,
       timeseries,
-      breakdown,
+      breakdowns,
       products,
       dateRange,
     });

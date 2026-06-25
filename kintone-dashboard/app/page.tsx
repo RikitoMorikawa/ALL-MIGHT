@@ -18,10 +18,12 @@ type DateKey = "created" | "delivery";
 type Granularity = "day" | "month";
 type DimKey = "arrange" | "equip" | "corp";
 
+type BreakdownRow = { key: string; revenue: number; count: number };
+
 type Stats = {
   totals: { revenue: number; count: number; corps: number; avg: number };
   timeseries: { date: string; revenue: number; count: number }[];
-  breakdown: { key: string; revenue: number; count: number }[];
+  breakdowns: Record<DimKey, BreakdownRow[]>;
   products: string[];
   dateRange: { min: string | null; max: string | null };
 };
@@ -50,6 +52,8 @@ const DIM_LABEL: Record<DimKey, string> = {
   equip: "レンタル機材",
   corp: "貸出先法人",
 };
+// 画面に縦並びで表示する分類軸の順序: 機材 → 法人 → 手配
+const DIM_ORDER: DimKey[] = ["equip", "corp", "arrange"];
 
 // 年度（4月始まり）。月は1-12。
 const fiscalYearOf = (y: number, m: number) => (m >= 4 ? y : y - 1);
@@ -78,6 +82,102 @@ function Segmented<T extends string>({
   );
 }
 
+// 1分類軸ぶんの「横棒グラフ＋明細テーブル」セクション
+function BreakdownSection({
+  label,
+  rows,
+  totalRevenue,
+  periodTitle,
+}: {
+  label: string;
+  rows: BreakdownRow[];
+  totalRevenue: number;
+  periodTitle: string;
+}) {
+  return (
+    <div className="grid-2">
+      <div className="panel">
+        <h2>
+          {label}別 売上（{periodTitle}）
+        </h2>
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart
+            layout="vertical"
+            data={rows.slice(0, 12)}
+            margin={{ left: 20 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
+            <XAxis
+              type="number"
+              stroke={C.axis}
+              fontSize={11}
+              tickFormatter={(v) => (v / 10000).toFixed(0) + "万"}
+            />
+            <YAxis
+              type="category"
+              dataKey="key"
+              stroke={C.axis}
+              fontSize={11}
+              width={140}
+            />
+            <Tooltip
+              contentStyle={{
+                background: C.tooltipBg,
+                border: `1px solid ${C.tooltipBorder}`,
+                borderRadius: 8,
+                color: C.tooltipText,
+              }}
+              formatter={(value: any) => [yen(Number(value)), "売上"]}
+            />
+            <Bar
+              dataKey="revenue"
+              name="売上"
+              fill={C.revenue}
+              radius={[0, 3, 3, 0]}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="panel">
+        <h2>
+          {label}別 明細（{periodTitle}）
+        </h2>
+        {rows.length === 0 ? (
+          <div className="loading">この期間のデータはありません</div>
+        ) : (
+          <table>
+            <thead>
+              <tr>
+                <th>{label}</th>
+                <th className="num">件数</th>
+                <th className="num">売上（税抜）</th>
+                <th className="num">構成比</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.key}>
+                  <td>{b.key}</td>
+                  <td className="num">{num(b.count)}</td>
+                  <td className="num">{yen(b.revenue)}</td>
+                  <td className="num">
+                    {totalRevenue > 0
+                      ? ((b.revenue / totalRevenue) * 100).toFixed(1)
+                      : "0.0"}
+                    %
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   // 初期: 今月（日別）
   const now = new Date();
@@ -86,7 +186,6 @@ export default function Dashboard() {
 
   const [dateField, setDateField] = useState<DateKey>("created");
   const [granularity, setGranularity] = useState<Granularity>("day");
-  const [dimension, setDimension] = useState<DimKey>("equip");
   const [product, setProduct] = useState<string>("all");
 
   // 日別: dayYear/dayMonth、月別: fiscalYear（独立保持）
@@ -107,7 +206,6 @@ export default function Dashboard() {
     const qs = new URLSearchParams({
       dateField,
       granularity,
-      dimension,
       product,
       year: String(reqYear),
       month: String(dayMonth),
@@ -121,7 +219,7 @@ export default function Dashboard() {
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [dateField, granularity, dimension, product, reqYear, dayMonth]);
+  }, [dateField, granularity, product, reqYear, dayMonth]);
 
   // 年/年度セレクタの選択肢（データ範囲から）
   const { calYears, fiscalYears } = useMemo(() => {
@@ -269,18 +367,6 @@ export default function Dashboard() {
         )}
 
         <div className="control-group">
-          <label>分類軸</label>
-          <Segmented<DimKey>
-            value={dimension}
-            onChange={setDimension}
-            options={[
-              { value: "arrange", label: "手配種別" },
-              { value: "equip", label: "機材" },
-              { value: "corp", label: "法人" },
-            ]}
-          />
-        </div>
-        <div className="control-group">
           <label>商品（機材）で絞り込み</label>
           <select
             className="product-select"
@@ -389,82 +475,15 @@ export default function Dashboard() {
             </ResponsiveContainer>
           </div>
 
-          <div className="grid-2">
-            <div className="panel">
-              <h2>{DIM_LABEL[dimension]}別 売上（{periodTitle}）</h2>
-              <ResponsiveContainer width="100%" height={320}>
-                <ComposedChart
-                  layout="vertical"
-                  data={data.breakdown.slice(0, 12)}
-                  margin={{ left: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.grid} />
-                  <XAxis
-                    type="number"
-                    stroke={C.axis}
-                    fontSize={11}
-                    tickFormatter={(v) => (v / 10000).toFixed(0) + "万"}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="key"
-                    stroke={C.axis}
-                    fontSize={11}
-                    width={140}
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      background: C.tooltipBg,
-                      border: `1px solid ${C.tooltipBorder}`,
-                      borderRadius: 8,
-                      color: C.tooltipText,
-                    }}
-                    formatter={(value: any) => [yen(Number(value)), "売上"]}
-                  />
-                  <Bar
-                    dataKey="revenue"
-                    name="売上"
-                    fill={C.revenue}
-                    radius={[0, 3, 3, 0]}
-                    isAnimationActive={false}
-                  />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="panel">
-              <h2>{DIM_LABEL[dimension]}別 明細（{periodTitle}）</h2>
-              {data.breakdown.length === 0 ? (
-                <div className="loading">この期間のデータはありません</div>
-              ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{DIM_LABEL[dimension]}</th>
-                      <th className="num">件数</th>
-                      <th className="num">売上（税抜）</th>
-                      <th className="num">構成比</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.breakdown.map((b) => (
-                      <tr key={b.key}>
-                        <td>{b.key}</td>
-                        <td className="num">{num(b.count)}</td>
-                        <td className="num">{yen(b.revenue)}</td>
-                        <td className="num">
-                          {data.totals.revenue > 0
-                            ? ((b.revenue / data.totals.revenue) * 100).toFixed(1)
-                            : "0.0"}
-                          %
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
+          {DIM_ORDER.map((dk) => (
+            <BreakdownSection
+              key={dk}
+              label={DIM_LABEL[dk]}
+              rows={data.breakdowns[dk] ?? []}
+              totalRevenue={data.totals.revenue}
+              periodTitle={periodTitle}
+            />
+          ))}
         </>
       )}
     </div>
