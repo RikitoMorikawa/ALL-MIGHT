@@ -193,11 +193,7 @@ export default function Dashboard() {
     <div className="container">
       <h1>レンタル売上ダッシュボード</h1>
       <div className="subtitle">
-        kintone アプリ10 → Turso / 売上（税抜：機器代+配送費-調整額）と販売数
-      </div>
-
-      <div className="note">
-        ※ kintoneの「ステータス」項目は全レコードで空のため、分類軸は実データのある「手配種別／レンタル機材／貸出先法人」を採用しています。
+        売上（税抜：機器代+配送費-調整額）と販売数
       </div>
 
       <div className="controls">
